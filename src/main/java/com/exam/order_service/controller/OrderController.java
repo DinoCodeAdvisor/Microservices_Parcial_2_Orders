@@ -30,7 +30,17 @@ public class OrderController {
                 throw new RuntimeException("Simulated failure during order creation");
             }
             order.setEstado("PENDIENTE");
-            return orderRepository.save(order);
+            Order savedOrder = orderRepository.save(order);
+            
+            // Workflow: ACTUALIZAR INVENTARIO - Paso 1
+            log.info("Order created, sending event to inventory_update_events");
+            java.util.Map<String, Object> event = new java.util.HashMap<>();
+            event.put("ordenId", savedOrder.getId());
+            event.put("productoIds", savedOrder.getProductoIds());
+            event.put("accion", "REDUCIR_STOCK");
+            kafkaTemplate.send("inventory_update_events", event);
+            
+            return savedOrder;
         } catch (Exception e) {
             log.error("Error creating order, sending to retry topic: {}", e.getMessage());
             
@@ -62,13 +72,48 @@ public class OrderController {
         return orderRepository.findByUsuarioId(usuarioId);
     }
 
+    @PutMapping("/{id}")
+    public Order updateOrder(@PathVariable String id, @RequestBody Order orderUpdate) {
+        log.info("Updating order with id: {}", id);
+        Order existingOrder = orderRepository.findById(id).orElse(null);
+        if (existingOrder != null) {
+            boolean productsChanged = !existingOrder.getProductoIds().equals(orderUpdate.getProductoIds());
+            
+            existingOrder.setProductoIds(orderUpdate.getProductoIds());
+            existingOrder.setTotal(orderUpdate.getTotal());
+            Order savedOrder = orderRepository.save(existingOrder);
+            
+            // Workflow: ACTUALIZAR INVENTARIO - Paso 1.1
+            if (productsChanged) {
+                log.info("Order products updated, sending event to inventory_update_events");
+                java.util.Map<String, Object> event = new java.util.HashMap<>();
+                event.put("ordenId", savedOrder.getId());
+                event.put("productoIds", savedOrder.getProductoIds());
+                event.put("accion", "REDUCIR_STOCK");
+                kafkaTemplate.send("inventory_update_events", event);
+            }
+            
+            return savedOrder;
+        }
+        return null;
+    }
+
     @PutMapping("/{id}/status")
     public Order updateStatus(@PathVariable String id, @RequestBody String status) {
         log.info("Updating status for order {}: {}", id, status);
         Order order = orderRepository.findById(id).orElse(null);
         if (order != null) {
             order.setEstado(status);
-            return orderRepository.save(order);
+            Order savedOrder = orderRepository.save(order);
+            
+            // Workflow: ACTUALIZAR ESTATUS DE ORDEN - Paso 1
+            log.info("Order status updated, sending event to order_status_changed_events");
+            java.util.Map<String, Object> event = new java.util.HashMap<>();
+            event.put("ordenId", savedOrder.getId());
+            event.put("nuevoEstado", savedOrder.getEstado());
+            kafkaTemplate.send("order_status_changed_events", event);
+            
+            return savedOrder;
         }
         return null;
     }
