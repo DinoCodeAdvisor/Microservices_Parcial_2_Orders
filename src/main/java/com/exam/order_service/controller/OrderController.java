@@ -39,6 +39,13 @@ public class OrderController {
             event.put("productoIds", savedOrder.getProductoIds());
             event.put("accion", "REDUCIR_STOCK");
             kafkaTemplate.send("inventory_update_events", event);
+
+            // Workflow: NOTIFICACION DE ORDEN - Paso 1 (Nuevo: Enviar correo de confirmación inmediatamente)
+            log.info("Order created, sending event to order_status_changed_events for confirmation email");
+            java.util.Map<String, Object> statusEvent = new java.util.HashMap<>();
+            statusEvent.put("ordenId", savedOrder.getId());
+            statusEvent.put("nuevoEstado", savedOrder.getEstado());
+            kafkaTemplate.send("order_status_changed_events", statusEvent);
             
             return savedOrder;
         } catch (Exception e) {
